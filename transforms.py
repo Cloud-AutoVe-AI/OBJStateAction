@@ -1,7 +1,7 @@
 import torch
 from torchvision.transforms import functional as F
 import math
-
+import torchvision
 
 # modified from https://github.com/chengyangfu/retinamask/blob/master/maskrcnn_benchmark/structures/image_list.py
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
