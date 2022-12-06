@@ -162,7 +162,7 @@ class DataModuleRoad(pl.LightningDataModule):
         
         
         self.base_w_h = [[512, 320],[768, 480],[1024, 640]]
-        self.BATCH_SIZE =[16,16,16]      #[48,48,48]    #
+        self.BATCH_SIZE =[8,8,8]      #[48,48,48]    #
         
 
 
