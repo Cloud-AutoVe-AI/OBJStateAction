@@ -40,7 +40,7 @@ class ETRI_dataset(Dataset):
     def __init__(
         self,
         train=True,
-        img_size=(480, 640),
+        img_size=(480, 1280),
         transform=None,  ):
         if train==True:
             t_val = 'train'
