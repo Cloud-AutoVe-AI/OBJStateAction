@@ -107,7 +107,7 @@ def get_model(depth=1, width=1, num_classes=7):
                 m.momentum = 0.03
 
 
-    in_channels = [256, 512, 1024]
+    in_channels = [256, 512, 726]
     backbone = YOLOPAFPN(depth, width, in_channels=in_channels)
     head = YOLOXHead(num_classes, width, in_channels=in_channels)
     model = YOLOX(backbone, head)
