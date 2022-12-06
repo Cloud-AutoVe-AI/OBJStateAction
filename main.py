@@ -17,9 +17,6 @@ import random
 import scipy
 import time
 
-import warnings
-warnings.filterwarnings("ignore")
-
 import matplotlib.pyplot as plt
 #from yolox.utils import postprocess
 
