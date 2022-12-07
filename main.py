@@ -125,7 +125,7 @@ def get_model(depth=1, width=1, num_classes=35):
         for m in M.modules():
             if isinstance(m, nn.BatchNorm2d):
                 m.eps = 1e-3
-                m.momentum = 0.03
+                m.momentum = 0.05
 
 
     in_channels = [256, 512, 1024]
