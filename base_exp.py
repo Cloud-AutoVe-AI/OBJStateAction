@@ -20,8 +20,8 @@ class BaseExp(metaclass=ABCMeta):
     def __init__(self):
         self.seed = None
         self.output_dir = "./YOLOX_outputs"
-        self.print_interval = 100
-        self.eval_interval = 10
+        self.print_interval = 50
+        self.eval_interval =20
 
     @abstractmethod
     def get_model(self) -> Module:
