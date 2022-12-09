@@ -85,7 +85,7 @@ class Bottleneck(nn.Module):
         in_channels,
         out_channels,
         shortcut=True,
-        expansion=0.8,
+        expansion=0.9,
         depthwise=False,
         act="silu",
     ):
