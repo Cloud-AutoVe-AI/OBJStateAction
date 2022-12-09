@@ -104,7 +104,6 @@ class ETRI_dataset(Dataset):
                  A.AdvancedBlur(p=0.5),
              ],p=0.66),
              A.RandomBrightnessContrast(p=0.5),
-             A.RandomShadow(p=1),
             
             A.Normalize(mean=self.MEANS,std=self.STDS),
             A.pytorch.transforms.ToTensorV2()],
