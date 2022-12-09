@@ -19,8 +19,6 @@ import pytorch_lightning as pl
 from yolox.exp import Exp
 import modules.evaluation as evaluate
 from pytorch_lightning.plugins import DDPPlugin
-import warnings
-warnings.filterwarnings("ignore")
 from yolox.utils import postprocess
 import math
 from torch.optim.lr_scheduler import _LRScheduler
