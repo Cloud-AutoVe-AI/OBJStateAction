@@ -23,7 +23,7 @@ class YOLOXHead(nn.Module):
         self,
         num_classes,
         width=1.0,
-        strides=[8, 16, 32],
+        strides=[8, 16, 64],
         in_channels=[256, 512, 1024],
         act="relu",
         depthwise=False,
