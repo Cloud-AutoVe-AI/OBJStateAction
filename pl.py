@@ -251,7 +251,7 @@ class Model(pl.LightningModule):
         #scheduler = self.exp.get_lr_scheduler(self.exp.basic_lr_per_img*BATCH_SIZE,MAX_ITER)
         #optimizer = torch.optim.AdamW(self.parameters(),lr=0)
         optimizer = self.exp.get_optimizer(48)
-        scheduler = CosineAnnealingWarmUpRestarts(optimizer, T_0=20, T_mult=2, eta_max=1e-5,  T_up=10, gamma=0.8)
+        scheduler = CosineAnnealingWarmUpRestarts(optimizer, T_0=40, T_mult=2, eta_max=1e-5,  T_up=10, gamma=0.8)
         #optimizer = self.exp.get_optimizer(48)
         #optimizer = torch.optim.AdamW(self.parameters(),lr=1e-4)
         #scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10,                                                                T_mult=2, eta_min=0.00001)
