@@ -12,7 +12,7 @@ from modules.solver import get_optim
 from val import validate
 from modules import utils
 logger = utils.get_logger(__name__)
-
+import numpy as np
 
 def train(args, net, train_dataset, val_dataset):
     
