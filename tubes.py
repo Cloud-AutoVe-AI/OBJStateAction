@@ -59,7 +59,7 @@ def build_eval_tubes(args, val_dataset):
         results = {}
         table = '\n|class'
         map_line = ['|mAP |' for _ in range(len(args.SUBSETS)*len(args.label_types[1:]))]
-        metric_types = ['stiou'] #['tiou','siou','stiou']
+        metric_types = ['siou'] #['tiou','siou','stiou']
         for metric_type in metric_types:
             for TUBES_EVAL_THRESH in args.TUBES_EVAL_THRESHS:
                 table += '|{:s} {:0.02f}'.format(metric_type, TUBES_EVAL_THRESH)
