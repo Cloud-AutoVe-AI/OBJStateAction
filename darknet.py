@@ -9,7 +9,7 @@ from .network_blocks import BaseConv, CSPLayer, DWConv, Focus, ResLayer, SPPBott
 
 class Darknet(nn.Module):
     # number of blocks from dark2 to dark5.
-    depth2blocks = {21: [1, 2, 2, 1], 53: [2, 8, 8, 4]}
+    depth2blocks = {20: [1, 2, 2, 1], 53: [2, 8, 8, 4]}
 
     def __init__(
         self,
