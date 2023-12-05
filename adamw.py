@@ -1,7 +1,7 @@
 import math
 import torch
 from torch.optim.optimizer import Optimizer
-
+import numpy as np
 
 class AdamW(Optimizer):
     """Implements Adam algorithm.
