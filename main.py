@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 
 MEANS =[0.485, 0.456, 0.406]
 STDS = [0.229, 0.224, 0.225]
-w_h = [1280,640]
+w_h = [1280,480]
 transform = A.Compose(
     [
      A.Normalize(mean=MEANS,std=STDS),
