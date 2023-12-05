@@ -8,24 +8,39 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from yolox.utils import bboxes_iou
+from yolox.utils import bboxes_iou, crop_mask
 
 import math
 
-from .losses import IOUloss,FocalLoss
+from .losses import IOUloss
 from .network_blocks import BaseConv, DWConv
 
-import numpy as np
 
+def xywh2xyxy(x):
+    """
+    Convert bounding box coordinates from (x, y, width, height) format to (x1, y1, x2, y2) format where (x1, y1) is the
+    top-left corner and (x2, y2) is the bottom-right corner.
+
+    Args:
+        x (np.ndarray | torch.Tensor): The input bounding box coordinates in (x, y, width, height) format.
+    Returns:
+        y (np.ndarray | torch.Tensor): The bounding box coordinates in (x1, y1, x2, y2) format.
+    """
+    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+    y[..., 0] = x[..., 0] - x[..., 2] / 2  # top left x
+    y[..., 1] = x[..., 1] - x[..., 3] / 2  # top left y
+    y[..., 2] = x[..., 0] + x[..., 2] / 2  # bottom right x
+    y[..., 3] = x[..., 1] + x[..., 3] / 2  # bottom right y
+    return y
 
 class YOLOXHead(nn.Module):
     def __init__(
         self,
         num_classes,
         width=1.0,
-        strides=[8, 16, 64],
+        strides=[8, 16, 32],
         in_channels=[256, 512, 1024],
-        act="relu",
+        act="silu",
         depthwise=False,
     ):
         """
@@ -37,30 +52,104 @@ class YOLOXHead(nn.Module):
 
         self.n_anchors = 1
         self.num_classes = num_classes
-        self.num_cls = 7
-        self.num_loc = 9
-        self.num_action  = 19
-        self.reid_channel = 128
-        
         self.decode_in_inference = True  # for deploy, set to False
+        self.reid_channel = int(in_channels[0] * width)
 
         self.cls_convs = nn.ModuleList()
-        self.loc_convs = nn.ModuleList()
-        self.action_convs = nn.ModuleList()
         self.reg_convs = nn.ModuleList()
         self.cls_preds = nn.ModuleList()
-        self.action_preds = nn.ModuleList()
-        self.loc_preds = nn.ModuleList()
         self.reg_preds = nn.ModuleList()
         self.obj_preds = nn.ModuleList()
-        
         self.reid_conv = nn.ModuleList()
         self.reid_feat = nn.ModuleList()
-        
         self.stems = nn.ModuleList()
         Conv = DWConv if depthwise else BaseConv
 
+        self.template =  nn.Sequential(
+                    *[
+                        
+                        Conv(
+                            in_channels=self.reid_channel,
+                            out_channels=self.reid_channel,
+                            ksize=3,
+                            stride=1,
+                            act=act,
+                        ),
+                        
+                        nn.Upsample(scale_factor=2, mode='bilinear'),
+                        
+                        Conv(
+                            in_channels=self.reid_channel,
+                            out_channels=self.reid_channel,
+                            ksize=3,
+                            stride=1,
+                            act=act,
+                        ),
+                        
+                        nn.Conv2d(
+                            in_channels=int(in_channels[0] * width),
+                            out_channels=self.reid_channel,
+                            kernel_size=1,
+                            stride=1,
+                            padding=0,
+                            bias=True
+                        ),
+                        nn.ReLU()
+                        
+                    ]
+                )
+        
+        
+        self.background =  nn.Sequential(
+                    *[
+                        Conv(
+                            in_channels=int(in_channels[2] * width),
+                            out_channels=int(in_channels[1] * width),
+                            ksize=3,
+                            stride=2,
+                            act=act,
+                        ),
+                        Conv(
+                            in_channels=int(in_channels[1] * width),
+                            out_channels=int(in_channels[0] * width),
+                            ksize=3,
+                            stride=1,
+                            act=act,
+                        ),
+                        nn.AdaptiveAvgPool2d(1),
+                        
+                        nn.Conv2d(
+                            in_channels=int(in_channels[0] * width),
+                            out_channels=self.reid_channel,
+                            kernel_size=1,
+                            stride=1,
+                            padding=0,
+                            bias=True
+                        ),
+                        nn.ReLU()
+                    ]
+                )
+        
         for i in range(len(in_channels)):
+            
+            self.reid_feat.append(
+                nn.Sequential(
+                    *[
+                        
+                        nn.Conv2d(
+                            in_channels=int(256 * width),
+                            out_channels=self.reid_channel,
+                            kernel_size=1,
+                            stride=1,
+                            padding=0,
+                            bias=True
+                        ),
+                        nn.ReLU()
+                    ]
+                )
+                
+            )
+            
             self.stems.append(
                 BaseConv(
                     in_channels=int(in_channels[i] * width),
@@ -71,46 +160,6 @@ class YOLOXHead(nn.Module):
                 )
             )
             self.cls_convs.append(
-                nn.Sequential(
-                    *[
-                        Conv(
-                            in_channels=int(256 * width),
-                            out_channels=int(256 * width),
-                            ksize=3,
-                            stride=1,
-                            act=act,
-                        ),
-                        Conv(
-                            in_channels=int(256 * width),
-                            out_channels=int(256 * width),
-                            ksize=3,
-                            stride=1,
-                            act=act,
-                        ),
-                    ]
-                )
-            )
-            self.action_convs.append(
-                nn.Sequential(
-                    *[
-                        Conv(
-                            in_channels=int(256 * width),
-                            out_channels=int(256 * width),
-                            ksize=3,
-                            stride=1,
-                            act=act,
-                        ),
-                        Conv(
-                            in_channels=int(256 * width),
-                            out_channels=int(256 * width),
-                            ksize=3,
-                            stride=1,
-                            act=act,
-                        ),
-                    ]
-                )
-            )
-            self.loc_convs.append(
                 nn.Sequential(
                     *[
                         Conv(
@@ -170,29 +219,10 @@ class YOLOXHead(nn.Module):
                     ]
                 )
             )
-            
             self.cls_preds.append(
                 nn.Conv2d(
                     in_channels=int(256 * width),
-                    out_channels=self.n_anchors * self.num_cls,
-                    kernel_size=1,
-                    stride=1,
-                    padding=0,
-                )
-            )
-            self.action_preds.append(
-                nn.Conv2d(
-                    in_channels=int(256 * width),
-                    out_channels=self.n_anchors * self.num_action,
-                    kernel_size=1,
-                    stride=1,
-                    padding=0,
-                )
-            )
-            self.loc_preds.append(
-                nn.Conv2d(
-                    in_channels=int(256 * width),
-                    out_channels=self.n_anchors * self.num_loc,
+                    out_channels=self.n_anchors * self.num_classes,
                     kernel_size=1,
                     stride=1,
                     padding=0,
@@ -216,29 +246,14 @@ class YOLOXHead(nn.Module):
                     padding=0,
                 )
             )
-            self.reid_feat.append(
-                nn.Sequential(
-                    *[
-                        
-                        nn.Conv2d(
-                            in_channels=int(256 * width),
-                            out_channels=self.reid_channel,
-                            kernel_size=1,
-                            stride=1,
-                            padding=0,
-                            bias=False
-                        ),
-                        nn.ReLU(inplace=True)
-                    ]
-                )
-                
-            )
 
         self.use_l1 = False
+        self.self_aug = False
         self.l1_loss = nn.L1Loss(reduction="none")
-        self.bcewithlog_loss = nn.BCEWithLogitsLoss(reduction="none")#FocalLoss()
-        self.mse_loss = nn.MSELoss(reduction='mean')
+        self.bcewithlog_loss = nn.BCEWithLogitsLoss(reduction="none")
         self.iou_loss = IOUloss(reduction="none")
+        self.mse_loss = nn.MSELoss(reduction='none')
+        self.CEloss = nn.CrossEntropyLoss(ignore_index=0)
         self.strides = strides
         self.grids = [torch.zeros(1)] * len(in_channels)
         self.expanded_strides = [None] * len(in_channels)
@@ -248,58 +263,45 @@ class YOLOXHead(nn.Module):
             b = conv.bias.view(self.n_anchors, -1)
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
-        for conv in self.loc_preds:
-            b = conv.bias.view(self.n_anchors, -1)
-            b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
-            conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
-        for conv in self.action_preds:
-            b = conv.bias.view(self.n_anchors, -1)
-            b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
-            conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
         for conv in self.obj_preds:
             b = conv.bias.view(self.n_anchors, -1)
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
-
-    def forward(self, xin, labels=None, cls=None , imgs=None):
+    def forward(self, xin, masks=None, labels=None, imgs=None):
         outputs = []
         origin_preds = []
         x_shifts = []
         y_shifts = []
         expanded_strides = []
-
-        for k, (cls_conv,loc_conv,action_conv, reg_conv, reid_conv ,stride_this_level, x) in enumerate(
-            zip(self.cls_convs,self.loc_convs,self.action_convs, self.reg_convs,self.reid_conv, self.strides, xin)
+        
+        mask_output = F.normalize(self.template(xin[0]),p=2,dim=1)
+        bg_vector = F.normalize(self.background(xin[2]),p=2,dim=1).squeeze()
+        if self.training:
+            resized_masks = torch.nn.functional.interpolate(masks.unsqueeze(1),size=(masks.shape[1]//4,masks.shape[2]//4),
+                                                     mode='nearest-exact').squeeze(1)
+            
+        for k, (cls_conv, reg_conv,reid_conv, stride_this_level, x) in enumerate(
+            zip(self.cls_convs, self.reg_convs,self.reid_conv, self.strides, xin)
         ):
-            #print('before',x.shape)
             x = self.stems[k](x)
-            #print('after',x.shape)
             cls_x = x
-            loc_x = x
-            action_x = x
             reg_x = x
             reid_x = x
 
             cls_feat = cls_conv(cls_x)
             cls_output = self.cls_preds[k](cls_feat)
 
-            loc_feat = loc_conv(loc_x)
-            loc_output = self.loc_preds[k](loc_feat)
-
-            action_feat = action_conv(action_x)
-            action_output = self.action_preds[k](action_feat)
-
-            re_id_feat = reid_conv(reid_x)
-            reid_output = self.reid_feat[k](re_id_feat)
-         
             reg_feat = reg_conv(reg_x)
             reg_output = self.reg_preds[k](reg_feat)
             obj_output = self.obj_preds[k](reg_feat)
 
+            reid_feat = reid_conv(reid_x)
+            reid_output = F.normalize(self.reid_feat[k](reid_feat),p=2,dim=1)
+            
             if self.training:
-                output = torch.cat([reg_output, obj_output, cls_output, loc_output, action_output,reid_output], 1)
+                output = torch.cat([reg_output, obj_output, cls_output,reid_output], 1)
                 output, grid = self.get_output_and_grid(
                     output, k, stride_this_level, xin[0].type()
                 )
@@ -323,10 +325,11 @@ class YOLOXHead(nn.Module):
 
             else:
                 output = torch.cat(
-                    [reg_output, obj_output.sigmoid(), cls_output.sigmoid(), loc_output.sigmoid(), action_output.sigmoid(),  F.normalize(reid_output, p=2.0, dim = 1)], 1
+                    [reg_output, obj_output.sigmoid(), cls_output.sigmoid(), reid_output], 1
                 )
 
             outputs.append(output)
+
         if self.training:
             return self.get_losses(
                 imgs,
@@ -334,9 +337,11 @@ class YOLOXHead(nn.Module):
                 y_shifts,
                 expanded_strides,
                 labels,
-                cls,
                 torch.cat(outputs, 1),
                 origin_preds,
+                mask_output,
+                resized_masks,
+                bg_vector,
                 dtype=xin[0].dtype,
             )
         else:
@@ -345,17 +350,16 @@ class YOLOXHead(nn.Module):
             outputs = torch.cat(
                 [x.flatten(start_dim=2) for x in outputs], dim=2
             ).permute(0, 2, 1)
-            #print(outputs.shape)
             if self.decode_in_inference:
-                return self.decode_outputs(outputs, dtype=xin[0].type())
+                return self.decode_outputs(outputs, dtype=xin[0].type()), mask_output,bg_vector
             else:
-                return outputs
+                return outputs, mask_output,bg_vector
 
     def get_output_and_grid(self, output, k, stride, dtype):
         grid = self.grids[k]
 
         batch_size = output.shape[0]
-        n_ch = 5 + self.num_classes + self.reid_channel
+        n_ch = 5 + self.num_classes+ self.reid_channel
         hsize, wsize = output.shape[-2:]
         if grid.shape[2:4] != output.shape[2:4]:
             yv, xv = torch.meshgrid([torch.arange(hsize), torch.arange(wsize)])
@@ -395,21 +399,29 @@ class YOLOXHead(nn.Module):
         y_shifts,
         expanded_strides,
         labels,
-        agent,
         outputs,
         origin_preds,
+        mask_output,
+        resized_masks,
+        bg_vector,
         dtype,
     ):
         bbox_preds = outputs[:, :, :4]  # [batch, n_anchors_all, 4]
         obj_preds = outputs[:, :, 4].unsqueeze(-1)  # [batch, n_anchors_all, 1]
-        cls_preds = outputs[:, :, 5:5+35]  # [batch, n_anchors_all, n_cls]
-        reid_preds = outputs[:, :, 5+35:]  # [batch, n_anchors_all, n_cls]
-        reid_preds = F.normalize(reid_preds, p=2.0, dim = 2)
+        cls_preds = outputs[:, :, 5:5+self.num_classes]  # [batch, n_anchors_all, n_cls]
+        reid_preds = outputs[:, :, 5+self.num_classes:]  # [batch, n_anchors_all, n_cls]
+        
+        height,width  = imgs.shape[-2:] #img height and widht
+        batch_size, _, mask_h, mask_w = mask_output.shape  # batch size, number of masks, mask height, mask width
+        
         # calculate targets
-        
-        label_cut = labels
+        mixup = labels.shape[2] > 5
+        if mixup:
+            label_cut = labels[..., :5]
+        else:
+            label_cut = labels
         nlabel = (label_cut.sum(dim=2) > 0).sum(dim=1)  # number of objects
-        
+
         total_num_anchors = outputs.shape[1]
         x_shifts = torch.cat(x_shifts, 1)  # [1, n_anchors_all]
         y_shifts = torch.cat(y_shifts, 1)  # [1, n_anchors_all]
@@ -419,24 +431,24 @@ class YOLOXHead(nn.Module):
 
         cls_targets = []
         reg_targets = []
+        reid_targets = []
+        one_hot_inds = []
         l1_targets = []
         obj_targets = []
-        reid_targets =[]
-        one_hot_inds=[]
         fg_masks = []
 
-        conf_matrix=[]
-        valid_matrix=[]
-        
         num_fg = 0.0
         num_gts = 0.0
         reid_loss = 0.0
-        total_reid_loss = 0.0
-        
-        
+        contra_loss=0.0
+
         for batch_idx in range(outputs.shape[0]):
-            
             num_gt = int(nlabel[batch_idx])
+            target_feat = mask_output[batch_idx,:,:]
+            bg_feat = bg_vector[batch_idx:batch_idx+1,:]
+            target_mask = resized_masks[batch_idx,:,:]
+            
+            
             num_gts += num_gt
             if num_gt == 0:
                 cls_target = outputs.new_zeros((0, self.num_classes))
@@ -445,48 +457,146 @@ class YOLOXHead(nn.Module):
                 obj_target = outputs.new_zeros((total_num_anchors, 1))
                 fg_mask = outputs.new_zeros(total_num_anchors).bool()
             else:
-                gt_bboxes_per_image = labels[batch_idx, :num_gt, :]
-                gt_classes = agent[batch_idx, :num_gt, :]
+                gt_bboxes_per_image = labels[batch_idx, :num_gt, 1:5]
+                gt_classes = labels[batch_idx, :num_gt, 0]
                 bboxes_preds_per_image = bbox_preds[batch_idx]
-
                 
-                (
-                    gt_matched_classes,
-                    fg_mask,
-                    pred_ious_this_matching,
-                    matched_gt_inds,
-                    num_fg_img,
-                ) = self.get_assignments(  # noqa
-                    batch_idx,
-                    num_gt,
-                    total_num_anchors,
-                    gt_bboxes_per_image,
-                    gt_classes,
-                    bboxes_preds_per_image,
-                    expanded_strides,
-                    x_shifts,
-                    y_shifts,
-                    cls_preds,
-                    bbox_preds,
-                    obj_preds,
-                    labels,
-                    agent,
-                    imgs,
-                )
+                try:
+                    (
+                        gt_matched_classes,
+                        fg_mask,
+                        pred_ious_this_matching,
+                        matched_gt_inds,
+                        num_fg_img,
+                    ) = self.get_assignments(  # noqa
+                        batch_idx,
+                        num_gt,
+                        total_num_anchors,
+                        gt_bboxes_per_image,
+                        gt_classes,
+                        bboxes_preds_per_image,
+                        expanded_strides,
+                        x_shifts,
+                        y_shifts,
+                        cls_preds,
+                        bbox_preds,
+                        obj_preds,
+                        labels,
+                        imgs,
+                    )
+                except RuntimeError:
+                    logger.info(
+                        "OOM RuntimeError is raised due to the huge memory cost during label assignment. \
+                           CPU mode is applied in this batch. If you want to avoid this issue, \
+                           try to reduce the batch size or image size."
+                    )
+                    print("OOM RuntimeError is raised due to the huge memory cost during label assignment. \
+                           CPU mode is applied in this batch. If you want to avoid this issue, \
+                           try to reduce the batch size or image size.")
+                    torch.cuda.empty_cache()
+                    (
+                        gt_matched_classes,
+                        fg_mask,
+                        pred_ious_this_matching,
+                        matched_gt_inds,
+                        num_fg_img,
+                    ) = self.get_assignments(  # noqa
+                        batch_idx,
+                        num_gt,
+                        total_num_anchors,
+                        gt_bboxes_per_image,
+                        gt_classes,
+                        bboxes_preds_per_image,
+                        expanded_strides,
+                        x_shifts,
+                        y_shifts,
+                        cls_preds,
+                        bbox_preds,
+                        obj_preds,
+                        labels,
+                        imgs,
+                        "cpu",
+                    )
+                
                 
                 torch.cuda.empty_cache()
                 num_fg += num_fg_img
 
-                cls_target = gt_matched_classes * pred_ious_this_matching.unsqueeze(-1)
+                cls_target = F.one_hot(
+                    gt_matched_classes.to(torch.int64), self.num_classes
+                ) * pred_ious_this_matching.unsqueeze(-1)
                 obj_target = fg_mask.unsqueeze(-1)
                 reg_target = gt_bboxes_per_image[matched_gt_inds]
-                #print(gt_matched_classes.shape,matched_gt_inds.shape)
-                
-                reid_target = reid_preds[batch_idx,fg_mask,:]
+
+                reid_target = reid_preds[batch_idx,fg_mask,:]  #Re-IDs
                 one_hot_ind = F.one_hot(matched_gt_inds,num_gt).to(dtype)
-                #print(one_hot_ind.shape)               
+                
+                merged_feat = reid_target.new_zeros(num_gt, reid_target.shape[1])  #zeros to merge same targets
+                count = reid_target.new_zeros(num_gt, 1)  #count to mean
+
+                merged_feat.scatter_add_(0, matched_gt_inds.view(-1, 1).expand(-1, merged_feat.size(1)), reid_target) #make sum
+                count.scatter_add_(0, matched_gt_inds.view(-1, 1), reid_target.new_ones(num_fg_img, 1)) #count dumplicates
+                involved_idx = (count>0)[:,0] # See found targets
+                merged_feat[involved_idx] /= count[involved_idx] # mean , num_gt X reid_feat_num
+                #print(merged_feat.shape, bg_feat.shape, gt_bboxes_per_image.shape)
+                #print(gt_bboxes_per_image,imgs.shape)
+                merged_feat = torch.cat((bg_feat,merged_feat),dim=0) #insert bg_vector
+                
+                xyxyn = gt_bboxes_per_image / torch.tensor( [width,height,width,height], device=gt_bboxes_per_image.device)
+                xyxyn = torch.cat(( torch.tensor([[0.5,0.5,1,1]]).to(xyxyn.device),xyxyn) ,dim=0)
+                marea = xyxyn[:, 2:].prod(1)
+                xyxyn = xywh2xyxy(xyxyn)
+                mxyxy = xyxyn * torch.tensor([mask_w, mask_h, mask_w, mask_h], device=gt_bboxes_per_image.device)
                 
                 
+                result_mask = torch.nn.functional.relu(torch.matmul(merged_feat,target_feat.view(reid_target.shape[1],-1)).view(num_gt+1,target_feat.shape[1],target_feat.shape[2])) 
+                
+                
+                
+                #result_mask = torch.matmul(torch.nn.functional.normalize(merged_feat, dim=1, p=2),\
+                 #                          torch.nn.functional.normalize(target_feat, dim=0, p=2).view(reid_target.shape[1],-1)).view(num_gt,target_feat.shape[1],target_feat.shape[2]) # This will be estimated mask
+                #result_mask = torch.cat((result_mask.new_zeros(1,result_mask.size(1),result_mask.size(2)),result_mask),dim=0) #pad first layer
+                #print(num_gt,num_fg_img)
+                                
+                #print(result_mask.shape, target_mask.shape)
+                
+                if torch.max(target_mask)+1<=result_mask.shape[0]:
+                    before_loss = self.mse_loss(result_mask,F.one_hot(target_mask.to(torch.long),num_gt+1).permute(2, 0, 1).to(dtype))
+                    mask_loss = (crop_mask(before_loss,mxyxy).mean(dim=(1,2))/marea).mean()
+                    #mask_loss = lovasz_softmax(result_maskresult_mask,.unsqueeze(0),target_mask.to(torch.long).unsqueeze(0))
+                    '''
+                    mask_loss = F.cross_entropy(result_mask.unsqueeze(0),target_mask.to(torch.long).unsqueeze(0),weight=loss_weight)\
+                    + 0.1* lovasz_softmax(result_mask.unsqueeze(0),target_mask.to(torch.long).unsqueeze(0))
+                    '''
+                    
+                else:
+                    print("Error", (torch.unique(target_mask)),result_mask.shape)
+                    mask_loss =0.0
+                reid_loss+=mask_loss
+                
+                
+                ## -------------- Contrastive Learning-----------------
+                
+                #conf_matrix = torch.nn.functional.relu(torch.matmul(merged_feat,torch.transpose(merged_feat, 0, 1))) #make confusion matrix
+                #valid_matrix= torch.diag(reid_target.new_ones(merged_feat.size(0)))
+                if self.self_aug==True:
+                    reid_targets.append(reid_target)
+                    one_hot_inds.append(one_hot_ind)
+                    #print(one_hot_ind.shape)
+                else:
+                    conf_matrix = torch.nn.functional.relu(torch.matmul(reid_target,torch.transpose(reid_target, 0, 1)))
+                    valid_matrix = torch.matmul(one_hot_ind,torch.transpose(one_hot_ind, 0, 1)) 
+
+
+                    contra_loss += self.mse_loss(conf_matrix,valid_matrix).mean()
+                '''
+                #reid_target = F.normalize(reid_target,p=2,dim=1)
+                conf_matrix = torch.nn.functional.relu(torch.matmul(reid_target,torch.transpose(reid_target, 0, 1)))
+                valid_matrix = torch.matmul(one_hot_ind,torch.transpose(one_hot_ind, 0, 1)) 
+                
+                
+                contra_loss += self.mse_loss(conf_matrix,valid_matrix).mean()
+                '''
                 if self.use_l1:
                     l1_target = self.get_l1_target(
                         outputs.new_zeros((num_fg_img, 4)),
@@ -495,45 +605,33 @@ class YOLOXHead(nn.Module):
                         x_shifts=x_shifts[0][fg_mask],
                         y_shifts=y_shifts[0][fg_mask],
                     )
-                    
-                
-            #print('shape: ',cls_target.shape,reg_target.shape,obj_target.shape)
+
             cls_targets.append(cls_target)
             reg_targets.append(reg_target)
             obj_targets.append(obj_target.to(dtype))
-            reid_targets.append(reid_target)
-            one_hot_inds.append(one_hot_ind)
-            
             fg_masks.append(fg_mask)
             if self.use_l1:
                 l1_targets.append(l1_target)
+            if self.self_aug==True:
+                if batch_idx%2==1:
+                    #print("1:", one_hot_inds[0].shape)
+                    #print("2:", one_hot_inds[1].shape)
+                    reid_targets = torch.cat(reid_targets,0)
+                    one_hot_inds = torch.cat(one_hot_inds,0)
 
-            if batch_idx%3==2:
-                
-                reid_targets = torch.cat(reid_targets,0)
-                one_hot_inds = torch.cat(one_hot_inds,0)
-                
-                #print('reid_feat:;',reid_targets.shape)
-                #print('one_hot_inds:;',one_hot_inds.shape)
-                conf_matrix = torch.matmul(reid_targets,torch.transpose(reid_targets, 0, 1)) #make confusion matrix
-                valid_matrix = torch.matmul(one_hot_inds,torch.transpose(one_hot_inds, 0, 1)) 
-                #np.savetxt('valid_matrix.out', valid_matrix.cpu().detach().numpy(), delimiter=' ') 
-                #np.savetxt('conf_matrix.out', conf_matrix.cpu().detach().numpy(), delimiter=' ') 
-                #print(valid_matrix,valid_matrix.shape)
-                #print(conf_matrix,conf_matrix.shape)
-                reid_loss = self.mse_loss(conf_matrix,valid_matrix)
-        
-                total_reid_loss+=reid_loss
-                reid_targets =[]
-                one_hot_inds=[]
+                    conf_matrix = torch.nn.functional.relu(torch.matmul(reid_targets,torch.transpose(reid_targets, 0, 1))) #make confusion matrix
+                    valid_matrix = torch.matmul(one_hot_inds,torch.transpose(one_hot_inds, 0, 1)) 
+
+                    contra_loss += self.mse_loss(conf_matrix,valid_matrix).mean()
+
+                    reid_targets =[]
+                    one_hot_inds=[]
+
                 
         cls_targets = torch.cat(cls_targets, 0)
-        #print('new shape: ' ,cls_targets.shape)
         reg_targets = torch.cat(reg_targets, 0)
         obj_targets = torch.cat(obj_targets, 0)
         fg_masks = torch.cat(fg_masks, 0)
-        
-        
         if self.use_l1:
             l1_targets = torch.cat(l1_targets, 0)
 
@@ -544,30 +642,6 @@ class YOLOXHead(nn.Module):
         loss_obj = (
             self.bcewithlog_loss(obj_preds.view(-1, 1), obj_targets)
         ).sum() / num_fg
-        #print(cls_preds.view(-1, self.num_classes)[fg_masks].shape)
-        #print(cls_targets.shape, cls_preds.view(-1, self.num_classes)[fg_masks].shape)
-        #print(cls_targets[0:5,:])
-        #print(cls_preds.view(-1, self.num_classes)[fg_masks].shape) = len(fg_masks)*35
-        '''
-        loss_agent = (
-            self.bcewithlog_loss(
-                cls_preds.view(-1, self.num_classes)[fg_masks][:,0:7], cls_targets[:,0:7]
-            )
-        ).sum() / num_fg
-        loss_loc = (
-            self.bcewithlog_loss(
-                cls_preds.view(-1, self.num_classes)[fg_masks][:,7:7+9], cls_targets[:,7:7+9]
-            )
-        ).sum() / num_fg
-        loss_action = (
-            self.bcewithlog_loss(
-                cls_preds.view(-1, self.num_classes)[fg_masks][:,7+9:7+9+19], cls_targets[:,7+9:7+9+19]
-            )
-        ).sum() / num_fg
-        '''
-        loss_agent=0.0
-        loss_loc=0.0
-        loss_action=0.0
         loss_cls = (
             self.bcewithlog_loss(
                 cls_preds.view(-1, self.num_classes)[fg_masks], cls_targets
@@ -581,8 +655,8 @@ class YOLOXHead(nn.Module):
             loss_l1 = 0.0
 
         reg_weight = 5.0
-        #print(loss_iou,total_reid_loss)
-        loss = reg_weight * loss_iou + loss_obj + loss_cls + loss_l1 + total_reid_loss
+        contra_weight = 2.0
+        loss = reg_weight * loss_iou + loss_obj + loss_cls + loss_l1 + reid_loss + contra_loss*contra_weight
 
         return (
             loss,
@@ -591,10 +665,8 @@ class YOLOXHead(nn.Module):
             loss_cls,
             loss_l1,
             num_fg / max(num_gts, 1),
-            loss_agent,
-            loss_loc,
-            loss_action,
-            reid_loss
+            reid_loss,
+            contra_loss
         )
 
     def get_l1_target(self, l1_target, gt, stride, x_shifts, y_shifts, eps=1e-8):
@@ -620,7 +692,6 @@ class YOLOXHead(nn.Module):
         bbox_preds,
         obj_preds,
         labels,
-        agent,
         imgs,
         mode="gpu",
     ):
@@ -634,6 +705,7 @@ class YOLOXHead(nn.Module):
             x_shifts = x_shifts.cpu()
             y_shifts = y_shifts.cpu()
 
+        img_size = imgs.shape[2:]
         fg_mask, is_in_boxes_and_center = self.get_in_boxes_info(
             gt_bboxes_per_image,
             expanded_strides,
@@ -641,14 +713,12 @@ class YOLOXHead(nn.Module):
             y_shifts,
             total_num_anchors,
             num_gt,
+            img_size
         )
 
         bboxes_preds_per_image = bboxes_preds_per_image[fg_mask]
-        cls_preds_ = cls_preds[batch_idx][fg_mask,:]
-        gt_classes_ = gt_classes[:,:]
+        cls_preds_ = cls_preds[batch_idx][fg_mask]
         obj_preds_ = obj_preds[batch_idx][fg_mask]
-        #print(cls_preds_.shape)
-        #print(obj_preds.shape)
         num_in_boxes_anchor = bboxes_preds_per_image.shape[0]
 
         if mode == "cpu":
@@ -658,22 +728,24 @@ class YOLOXHead(nn.Module):
         pair_wise_ious = bboxes_iou(gt_bboxes_per_image, bboxes_preds_per_image, False)
 
         gt_cls_per_image = (
-            gt_classes_.unsqueeze(1).repeat(1, num_in_boxes_anchor, 1)
+            F.one_hot(gt_classes.to(torch.int64), self.num_classes)
+            .float()
+            .unsqueeze(1)
+            .repeat(1, num_in_boxes_anchor, 1)
         )
         pair_wise_ious_loss = -torch.log(pair_wise_ious + 1e-8)
 
         if mode == "cpu":
             cls_preds_, obj_preds_ = cls_preds_.cpu(), obj_preds_.cpu()
-        #print(cls_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_().shape)
-        #print(obj_preds_.unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_().shape)
-        cls_preds_ = (
-            cls_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
-            * obj_preds_.unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
-        )
-        cls_preds= (cls_preds-0.5)*4
-        pair_wise_cls_loss = F.binary_cross_entropy_with_logits(
-            cls_preds_.sqrt_(), gt_cls_per_image, reduction="none"
-        ).sum(-1)
+
+        with torch.cuda.amp.autocast(enabled=False):
+            cls_preds_ = (
+                cls_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
+                * obj_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
+            )
+            pair_wise_cls_loss = F.binary_cross_entropy(
+                cls_preds_.sqrt_(), gt_cls_per_image, reduction="none"
+            ).sum(-1)
         del cls_preds_
 
         cost = (
@@ -695,28 +767,7 @@ class YOLOXHead(nn.Module):
             fg_mask = fg_mask.cuda()
             pred_ious_this_matching = pred_ious_this_matching.cuda()
             matched_gt_inds = matched_gt_inds.cuda()
-        '''
-        print(
-            gt_matched_classes,
-            '\n',
-            gt_matched_classes.shape,
-            '\n-------gt_matched_classes--------------------\n',
-            fg_mask,
-            '\n',
-            fg_mask.shape,
-            '\n--------fg_mask-------------------\n',
-            pred_ious_this_matching,
-            '\n',
-            pred_ious_this_matching.shape,
-            '\n------pred_ious_this_matching---------------------\n',
-            matched_gt_inds,
-            '\n',
-            matched_gt_inds.shape,
-            '\n-----matched_gt_inds----------------------\n',
-            num_fg,
-            '\n-----End----------------------\n\n\n',
-        )
-        '''
+
         return (
             gt_matched_classes,
             fg_mask,
@@ -733,6 +784,7 @@ class YOLOXHead(nn.Module):
         y_shifts,
         total_num_anchors,
         num_gt,
+        img_size
     ):
         expanded_strides_per_image = expanded_strides[0]
         x_shifts_per_image = x_shifts[0] * expanded_strides_per_image
@@ -780,17 +832,21 @@ class YOLOXHead(nn.Module):
         # in fixed center
 
         center_radius = 2.5
+        # clip center inside image
+        gt_bboxes_per_image_clip = gt_bboxes_per_image[:, 0:2].clone()
+        gt_bboxes_per_image_clip[:, 0] = torch.clamp(gt_bboxes_per_image_clip[:, 0], min=0, max=img_size[1])
+        gt_bboxes_per_image_clip[:, 1] = torch.clamp(gt_bboxes_per_image_clip[:, 1], min=0, max=img_size[0])
 
-        gt_bboxes_per_image_l = (gt_bboxes_per_image[:, 0]).unsqueeze(1).repeat(
+        gt_bboxes_per_image_l = (gt_bboxes_per_image_clip[:, 0]).unsqueeze(1).repeat(
             1, total_num_anchors
         ) - center_radius * expanded_strides_per_image.unsqueeze(0)
-        gt_bboxes_per_image_r = (gt_bboxes_per_image[:, 0]).unsqueeze(1).repeat(
+        gt_bboxes_per_image_r = (gt_bboxes_per_image_clip[:, 0]).unsqueeze(1).repeat(
             1, total_num_anchors
         ) + center_radius * expanded_strides_per_image.unsqueeze(0)
-        gt_bboxes_per_image_t = (gt_bboxes_per_image[:, 1]).unsqueeze(1).repeat(
+        gt_bboxes_per_image_t = (gt_bboxes_per_image_clip[:, 1]).unsqueeze(1).repeat(
             1, total_num_anchors
         ) - center_radius * expanded_strides_per_image.unsqueeze(0)
-        gt_bboxes_per_image_b = (gt_bboxes_per_image[:, 1]).unsqueeze(1).repeat(
+        gt_bboxes_per_image_b = (gt_bboxes_per_image_clip[:, 1]).unsqueeze(1).repeat(
             1, total_num_anchors
         ) + center_radius * expanded_strides_per_image.unsqueeze(0)
 
@@ -808,6 +864,7 @@ class YOLOXHead(nn.Module):
         is_in_boxes_and_center = (
             is_in_boxes[:, is_in_boxes_anchor] & is_in_centers[:, is_in_boxes_anchor]
         )
+        del gt_bboxes_per_image_clip
         return is_in_boxes_anchor, is_in_boxes_and_center
 
     def dynamic_k_matching(self, cost, pair_wise_ious, gt_classes, num_gt, fg_mask):
@@ -816,7 +873,7 @@ class YOLOXHead(nn.Module):
         matching_matrix = torch.zeros_like(cost)
 
         ious_in_boxes_matrix = pair_wise_ious
-        n_candidate_k = 10
+        n_candidate_k = min(10, ious_in_boxes_matrix.size(1))
         topk_ious, _ = torch.topk(ious_in_boxes_matrix, n_candidate_k, dim=1)
         dynamic_ks = torch.clamp(topk_ious.sum(1).int(), min=1)
         for gt_idx in range(num_gt):
@@ -838,7 +895,7 @@ class YOLOXHead(nn.Module):
         fg_mask[fg_mask.clone()] = fg_mask_inboxes
 
         matched_gt_inds = matching_matrix[:, fg_mask_inboxes].argmax(0)
-        gt_matched_classes = gt_classes[matched_gt_inds,:]
+        gt_matched_classes = gt_classes[matched_gt_inds]
 
         pred_ious_this_matching = (matching_matrix * pair_wise_ious).sum(0)[
             fg_mask_inboxes
