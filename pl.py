@@ -91,7 +91,7 @@ def get_individual_labels(gt_boxes, tgt_labels):
     return new_gts[:ccc,:]
 
 
-def get_model(depth=0.33, width=0.5, num_classes=7):
+def get_model(depth=0.5, width=0.75, num_classes=7):
     from yolox.models import YOLOPAFPN, YOLOX, YOLOXHead
 
     def init_yolo(M):
