@@ -2,7 +2,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 import math
 import torch
-
+import numpy as np
 
 class ReduceMaxLROnRestart:
     def __init__(self, ratio=0.75):
