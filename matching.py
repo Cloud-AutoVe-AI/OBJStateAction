@@ -125,7 +125,7 @@ def easy_distance(tracks, detections):
         #cost_matrix[i, :] = np.maximum(0.0, cdist(track.smooth_feat.reshape(1,-1), det_features, metric))
     track_features = np.asarray([track.smooth_feat for track in tracks], dtype=float)
     cost_matrix = np.maximum(0.0, track_features@det_features.T)
-    #print((cost_matrix*100).astype(int))
+    #print((cost_matrix).astype(int))
     return 1-cost_matrix
 
 
