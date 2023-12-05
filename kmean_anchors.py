@@ -13,7 +13,7 @@ parser.add_argument('--base_dir', default='/mnt/mercury-alpha/', help='Location 
 
 feature_size = [75, 38, 19, 10, 5]
 feature_size = [1, 1, 1, 1, 1]
-thresh = 0.5
+thresh = 0.7
 
 def  get_unique_anchors():
         # print(print_str)
