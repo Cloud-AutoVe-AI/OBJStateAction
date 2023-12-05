@@ -4,7 +4,7 @@
 
 import torch
 import torch.nn as nn
-
+import numpy as np
 
 class SiLU(nn.Module):
     """export-friendly version of nn.SiLU()"""
