@@ -831,7 +831,7 @@ class YOLOXHead(nn.Module):
         is_in_boxes_all = is_in_boxes.sum(dim=0) > 0
         # in fixed center
 
-        center_radius = 2.5
+        center_radius = 1.5
         # clip center inside image
         gt_bboxes_per_image_clip = gt_bboxes_per_image[:, 0:2].clone()
         gt_bboxes_per_image_clip[:, 0] = torch.clamp(gt_bboxes_per_image_clip[:, 0], min=0, max=img_size[1])
