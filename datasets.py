@@ -51,7 +51,7 @@ class ETRI_dataset(Dataset):
         self.width = 1280
         self.train = train
         
-        root = '/data/road-dataset/road/ETRI_Dataset/'+t_val
+        root = './road/ETRI_Dataset/'+t_val
 
         EXTENSIONS = ['.jpg','.png']
         def is_image(filename):
