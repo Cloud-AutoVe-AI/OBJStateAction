@@ -1,7 +1,6 @@
 from data import datasets, dataset_backup
 import albumentations as A
 from data import custum_collate
-from data import custom_collate
 import numpy as np
 import glob, cv2
 import matplotlib.pyplot as plt
