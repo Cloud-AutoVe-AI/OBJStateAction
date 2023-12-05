@@ -4,7 +4,7 @@
 
 import torch
 import torch.nn as nn
-
+import numpy as np
 
 class IOUloss(nn.Module):
     def __init__(self, reduction="none", loss_type="iou"):
