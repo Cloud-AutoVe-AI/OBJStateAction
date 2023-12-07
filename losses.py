@@ -73,7 +73,7 @@ def sigmoid_focal_loss(preds, labels, alpha, gamma, bcewithlog_loss):
 
 
 class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.5, gamma=2.0):
+    def __init__(self, alpha=0.5, gamma=1.0):
         super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
