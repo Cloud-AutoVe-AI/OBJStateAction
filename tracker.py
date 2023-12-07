@@ -175,7 +175,7 @@ class BYTETracker(object):
         bboxes /= scale
 
         remain_inds = scores > self.args.track_thresh
-        inds_low = scores > 0.1
+        inds_low = scores > 0.2
         inds_high = scores < self.args.track_thresh
 
         inds_second = np.logical_and(inds_low, inds_high)
