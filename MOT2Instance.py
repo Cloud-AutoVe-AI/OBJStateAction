@@ -53,9 +53,9 @@ def aug_img_box(img,gtFine):
     y_max = np.clip(gtFine[:,3],0,img.shape[0])
 
     longer_side = np.maximum(img.shape[1],img.shape[0])
-    scale1 = 2000/longer_side
-    scale2 = 4000/longer_side
-    scale3 = 6000/longer_side
+    scale1 = 1000/longer_side
+    scale2 = 2000/longer_side
+    scale3 = 3000/longer_side
     
     #original    
     aug_imgs.append( cv2.resize(img, dsize=(0, 0), fx=scale1, fy=scale1, interpolation=cv2.INTER_LINEAR))
