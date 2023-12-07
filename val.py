@@ -42,7 +42,7 @@ def validate(args, net,  val_data_loader, val_dataset, iteration_num):
     
     
     print_time = True
-    val_step = 10
+    val_step = 5
     count = 0
     torch.cuda.synchronize()
     ts = time.perf_counter()
