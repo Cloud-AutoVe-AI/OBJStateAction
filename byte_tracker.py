@@ -25,7 +25,7 @@ class STrack(BaseTrack):
         self.tracklet_len = 0
 
         self.smooth_feat = None
-        self.area = temp_feat[-1]
+        self.area = 0.9#temp_feat[-1]
         self.alpha = 1-self.area
 
         self.update_features(temp_feat[:-1])
