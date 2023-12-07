@@ -134,7 +134,7 @@ for ids_ in ids:
         anno_ids = coco.getAnnIds(imgIds=[ids_], iscrowd=False)
         annotations = coco.loadAnns(anno_ids)
         img_file = '/home/etri/ByteTrack/datasets/DanceTrack/train/'+anno[0]['file_name']
-        print(img_file)
+        #print(img_file)
         save_path = img_file.replace('img1','instance').replace('.jpg','.png').replace('crowdhuman_','crowdhuman_instance_')
         img = cv2.imread(img_file)        
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
