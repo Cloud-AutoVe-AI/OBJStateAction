@@ -24,7 +24,7 @@ class Exp(BaseExp):
         # ---------------- dataloader config ---------------- #
         # set worker to 4 for shorter dataloader init time
         self.data_num_workers = 4
-        self.input_size = (640, 1280)
+        self.input_size = (480, 1280)
         self.random_size = (14, 26)
         self.train_ann = "instances_train2017.json"
         self.val_ann = "instances_val2017.json"
