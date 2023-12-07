@@ -245,7 +245,7 @@ def custum_collate(batch):
         counts.append(bs.shape[0])
     
     
-    new_boxes = torch.zeros([len(boxes), max_len, 4])
+    new_boxes = torch.zeros([len(boxes), max_len, 5])
     new_targets = torch.zeros([len(boxes), max_len, num_classes])
     
     
