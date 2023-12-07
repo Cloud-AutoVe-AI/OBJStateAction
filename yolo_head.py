@@ -50,7 +50,7 @@ class YOLOXHead(nn.Module):
         """
         super().__init__()
 
-        self.n_anchors = 1
+        self.n_anchors = 3
         self.num_classes = num_classes
         self.decode_in_inference = True  # for deploy, set to False
         self.reid_channel = int(in_channels[0] * width)
